@@ -76,6 +76,85 @@ def preprocess_twin(input_img, validation_img, label):
     return(preprocess(input_img), preprocess(validation_img), label)
 
 
+# BUILDING THE MODEL: Making the Embedding layer
+def make_embedding():
+    
+    # data should be in 100, 100, and 3, as preprocessing has done
+    input_layer = Input(shape=(100, 100, 3), name="input_image")
+
+    # Create a Conv2D layer with 64 filters of size 10x10 and ReLU activation, applied to the input inp
+    c1 = Conv2D(64, (10, 10), activation='relu')(input_layer)
+
+    #Create a maxpooling layer with 64 filters of size 2x2 and "same" padding, applied to layer c1
+    m1 = MaxPooling2D(64, (2, 2), padding="same")(c1)
+
+    #Create a Conv2D layer with 128 filters of size 7x7 and ReLU activation
+    c2 = Conv2D(128, (7, 7), activation='relu')(m1)
+
+    #All remaining max pooling layers below are identical to one above, just make sure you are applying it to the correct layer
+    m2 = MaxPooling2D(64, (2, 2), padding="same")(c2)
+
+    #Create a Conv2D layer with 128 filters of size 4x4 and ReLU activation
+    c3 = Conv2D(128, (4, 4), activation='relu')(m2)
+    m3 = MaxPooling2D(64, (2, 2), padding="same")(c3)
+
+    #Create a Conv2D layer with 256 filters of size 4x4 and ReLU activation
+    c4 = Conv2D(256, (4, 4), activation='relu')(m3)
+
+    f1 = Flatten()(c4)
+
+    #Create a dense layer with 4096 output neurons, sigmoid activation, applied to the flattened layer in previous line
+    d1 = Dense(4096, activation='sigmoid')(f1)
+
+    return Model(inputs=[input_layer], outputs=[d1], name='embedding')
+
+# BUILDING THE MODEL: Siamese L1 Distance class
+class L1Dist(Layer):
+
+    # Init method - inheritance
+    def __init__(self, **kwargs):
+        super(L1Dist, self).__init__(**kwargs)
+
+    # similarity calculation
+    def call(self, inputs):
+         # Unpack the inputs - ensure they are tensors, not lists
+        input_embedding, validation_embedding = inputs
+
+        # Ensure the inputs are Keras tensors
+        input_embedding = tf.convert_to_tensor(input_embedding)
+        validation_embedding = tf.convert_to_tensor(validation_embedding)
+
+        # Calculate L1 distance (absolute difference between embeddings)
+        return tf.math.abs(input_embedding - validation_embedding)
+    
+
+def make_siamese_model():
+
+    embedding = make_embedding()
+
+    # Anchor image input in the network
+    input_image = Input(name='input_img', shape=(100,100,3))
+
+    # Validation image in the network
+    validation_image = Input(name='validation_img', shape=(100,100,3))
+
+    # Combine siamese distance components
+    siamese_layer = L1Dist()
+    siamese_layer._name = 'distance'
+
+    # Embed input layers into feature representations
+    # Simply pass input image through the embedding model
+    inp_embedding = embedding(input_image)
+    val_embedding = embedding(validation_image)
+
+    distances = siamese_layer([inp_embedding, val_embedding])
+
+    # Classification layer
+    classifier = Dense(1, activation='sigmoid')(distances)
+
+    return Model(inputs=[input_image, validation_image], outputs=classifier, name='SiameseNetwork')
+
+
 if __name__ == "__main__":
 
     # # Make directories
@@ -127,18 +206,11 @@ if __name__ == "__main__":
     test_data = train_data.batch(16)
     test_data = train_data.prefetch(8)
 
-
     # ---------MODEL TRAINING BEGINS----------
-    
-    # data should be in 100, 100, and 3, as preprocessing has done
-    input_layer = Input(shape=(100, 100, 3), name="input_image")
 
-    # Define the Conv2D layer with 64 filters, kernel size of 10x10, and ReLU activation
-    conv_layer = Conv2D(64, (10, 10), activation='relu')(input_layer)
+    # MAKE THE FINAL MODEL
+    siamese_model = make_siamese_model()
+    siamese_model.summary()
 
-    model = Model(inputs=input_layer, outputs=conv_layer)
-
-    # Print the summary of the conv layer within the model
-    model.summary()
    
 
