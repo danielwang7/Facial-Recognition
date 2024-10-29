@@ -12,6 +12,7 @@ import uuid
 # https://www.tensorflow.org/guide/keras/functional_api
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Layer, Conv2D, Dense, MaxPooling2D, Input, Flatten
+from tensorflow.keras.metrics import Precision, Recall
 import tensorflow as tf
 
 # Setup paths
@@ -154,6 +155,71 @@ def make_siamese_model():
 
     return Model(inputs=[input_image, validation_image], outputs=classifier, name='SiameseNetwork')
 
+@tf.function
+def train_step(batch, siamese_model, opt, binary_cross_loss):
+    # Record all of our operations
+    with tf.GradientTape() as tape:
+
+        # Unpack batch inputs correctly
+        input_img, validation_img = batch[:2]
+
+        # Get label
+        y = batch[2]
+
+        # Forward pass
+        yhat = siamese_model([input_img, validation_img], training=True)
+
+        # LOOK FOR BUGS ON THIS LINE!!!!
+        yhat = tf.squeeze(yhat)  # This removes any singleton dimensions if needed
+        
+        # Calculate loss
+        # Ensure shape match before loss calculation
+        yhat = tf.squeeze(yhat)  # Adjust if needed to match `y`
+        loss = binary_cross_loss(y, yhat)
+         
+    print(loss)
+
+    # Calculate gradients
+    grad = tape.gradient(loss, siamese_model.trainable_variables)
+
+    # Calculate updated weights and apply to siamese model
+    opt.apply_gradients(zip(grad, siamese_model.trainable_variables))
+
+    # Return loss
+    return loss
+
+def train(data, EPOCHS, model, optimizer, loss_fn, checkpoint, checkpoint_prefix):
+
+    try:
+        # Loop through epochs
+        for epoch in range(1, EPOCHS+1):
+            print('\n Epoch {}/{}'.format(epoch, EPOCHS))
+            progbar = tf.keras.utils.Progbar(len(data))
+
+            #Create a Recall object
+            r = tf.keras.metrics.Recall()
+            #Create a Precision object
+            p = tf.keras.metrics.Precision()
+
+            # Loop through each batch
+            for idx, batch in enumerate(data):
+                #Call train step function and pass in the batch
+                loss = train_step(batch, model, optimizer, loss_fn)
+                yhat = siamese_model.predict(batch[:2])
+                r.update_state(batch[2], yhat)
+                p.update_state(batch[2], yhat)
+                progbar.update(idx+1)
+            print(f"Loss: {loss.numpy()}, Recall: {r.result().numpy()}, Precision: {p.result().numpy()}")
+
+            # Save checkpoints
+            if epoch % 10 == 0:
+                checkpoint.save(file_prefix=checkpoint_prefix)
+    except KeyboardInterrupt:
+        print("Training interrupted. Saving current progress...")
+        # Save the current state before exiting
+        checkpoint.save(file_prefix=checkpoint_prefix)
+        print("Checkpoint saved. Training stopped.")
+
 
 if __name__ == "__main__":
 
@@ -211,6 +277,35 @@ if __name__ == "__main__":
     # MAKE THE FINAL MODEL
     siamese_model = make_siamese_model()
     siamese_model.summary()
+
+    #Setup loss and optimizer
+
+    #Use binary cross entropy loss
+    binary_cross_loss = tf.losses.BinaryCrossentropy()
+
+    #Use Adam with a learning rate of 0.0001
+    opt = tf.keras.optimizers.Adam(learning_rate=0.0001)
+
+    #Create checkpoints for saving model progress throughout training
+    checkpoint_dir = os.path.join(os.getcwd(), "training_checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_prefix = os.path.join(checkpoint_dir, 'ckpt')
+    checkpoint = tf.train.Checkpoint(opt=opt, siamese_model=siamese_model)
+
+
+
+    # TRAIN THE MODEL WITH THE FUNCTIONS!
+    train(data=train_data, 
+      EPOCHS=2, 
+      model=siamese_model, 
+      optimizer=opt, 
+      loss_fn=binary_cross_loss, 
+      checkpoint=checkpoint, 
+      checkpoint_prefix=checkpoint_prefix)
+    
+
+
+
 
    
 
